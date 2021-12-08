@@ -1,0 +1,459 @@
+---
+title: "Case Study 2"
+author: "Richard Kim"
+date: "12/01/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+<div style="margin-bottom:50px;">
+</div>
+
+## **Introduction**
+
+<div style="margin-bottom:20px;">
+</div>
+
+##### **The purpose of this project is to identify the top predictive factors that lead to employee turnover at DDSAnalytics. In pursuit of this goal, and in hopes of using income as a predictor for attrition, we also investigate predictive models for employees' monthly incomes. As a final step for this project, we build a classification model to reliably predict attrition among employees in the company.** 
+
+<div style="margin-bottom:20px;">
+</div>
+
+[Presentation Link](https://www.youtube.com/watch?v=d6D1n1mXg5M)
+
+<div style="margin-bottom:50px;">
+</div>
+
+## **Setting up**
+
+### *Loading necessary libraries*
+
+```{r warnings = FALSE, message = FALSE}
+library(dplyr)
+library(ggplot2)
+library(ggthemes)
+library(openxlsx)
+library(class) #knn
+library(e1071) #naive-bayes
+library(caret) #confusion matrix
+```
+
+```{r echo=TRUE}
+
+# Reading the data into two different dataframes. Be sure to modify the directories accordingly. 
+NoAttrition <- read.csv("D:\\Shared Lenovo\\Data Science\\Semester 1\\Doing Data Science\\Unit 14+15 - DDS Project 2\\CaseStudy2CompSet No Attrition.csv")
+
+NoSalary <- read.xlsx("D:\\Shared Lenovo\\Data Science\\Semester 1\\Doing Data Science\\Unit 14+15 - DDS Project 2\\CaseStudy2CompSet No Salary.xlsx")
+
+```
+
+<div style="margin-bottom:100px;">
+</div>
+
+## **Linear Regression - For Salary Prediction**
+
+### Setting up new variables
+```{r}
+
+# Creating a new variable to dichotomize job roles
+NewNoAttrition <- NoAttrition %>% 
+  mutate(RD_Manager0 = ifelse(grepl('Research Director|Manager',JobRole),0,1))
+
+NewNoSalary <- NoSalary %>% 
+  mutate(RD_Manager0 = ifelse(grepl('Research Director|Manager',JobRole),0,1))
+
+```
+
+### Plotting Job Roles
+```{r}
+
+# Distributions for Job Roles
+options(scipen = 999)
+
+NewNoAttrition %>% 
+  ggplot(aes(y = JobRole, x = MonthlyIncome, fill = JobRole)) + 
+  geom_bar(stat = "summary") + 
+  ggtitle("Monthly Income by Job Role") + 
+  labs(x = 'Monthly Income', y = 'Job Role', fill = 'Legend') + 
+  theme_pander()
+
+```
+
+```{r}
+
+NewNoAttrition %>% 
+  ggplot(aes(y = JobRole, x = YearsAtCompany, fill = JobRole)) + 
+  geom_bar(stat = "summary") + 
+  ggtitle("Years with the Company by Job Role") + 
+  labs(x = 'Years', y = 'Job Roles', fill = 'Legend') + 
+  theme_pander()
+
+```
+
+```{r}
+
+# Linear Regression to create a prediction model for monthly income
+fit <- lm(MonthlyIncome ~ JobLevel*JobRole + TotalWorkingYears, data = NewNoAttrition)
+summary(fit)
+
+# Checking Violations of Assumptions
+hist(fit$residuals)
+plot(fit)
+
+```
+
+<div style="margin-bottom:20px;">
+</div>
+
+#### **The plot of the residuals indicate that the data are mostly homoscedastic. We attempted some transformations with our variables to resolve the greater spread around 5000 along the x-axis. Unsuccessful, we concluded that it is reasonable to proceed as is. Though the final plot of the standardized residuals show that there are a few datapoints with high leverage, they do not appear to be influential points. The QQ plot indicates some aberration from normality. However, given the large sample size of 300, we choose to continue with this model with no modifications.** 
+
+<div style="margin-bottom:30px;">
+</div>
+
+```{r}
+
+NewNoAttrition %>% 
+  ggplot(aes(x = JobLevel, y = MonthlyIncome, color = JobRole)) + 
+  geom_point() + 
+  facet_wrap(~JobRole) + 
+  ggtitle('Job Level by Job Roles') + 
+  labs(y = 'Monthly Income', x = 'Job Level') + 
+  theme_minimal()
+
+```
+
+```{r}
+
+NewNoAttrition %>% 
+  ggplot(aes(x = TotalWorkingYears, y = MonthlyIncome)) + 
+  geom_point(color = 'steelblue') + 
+  geom_smooth(method = 'lm') + 
+  ggtitle('Income by Years Worked') + 
+  labs(y = 'Monthly Income', x = 'Total Years Worked') + 
+  theme_pander()
+
+```
+
+### Predict Salary!
+```{r}
+
+# Prediction Comparison
+preds = predict(fit, newdata = NewNoAttrition)
+
+# Checking predictions to actual income
+NoAttritionTestIncome <- NewNoAttrition %>% 
+  mutate(PredMonthlyIncome = preds) %>% 
+  select(MonthlyIncome, PredMonthlyIncome)
+
+# Imputing NoSalary Dataframe (with Regression Model)
+incomepreds = predict(fit, newdata = NewNoSalary)
+
+SalaryResults <- NewNoSalary %>% 
+  mutate(PredictedSalary = incomepreds)
+
+```
+
+<div style="margin-bottom:100px;">
+</div>
+
+## **Naive-Bayes - For Attrition Prediction**
+
+### Setting up new variables
+```{r}
+
+# Imputing NoSalary dataset with predicted income, then creating new variables for attrition
+NoSalaryPredictIncome <- NewNoSalary %>% 
+  mutate(MonthlyIncome = incomepreds,
+         Job_Cat = ifelse(grepl('Health|Manager',JobRole),0,
+                          ifelse(grepl('Research|Executive',JobRole),1,
+                                 ifelse(grepl('Resoources|Manufacturing',JobRole),2,
+                                        ifelse(grepl('Representative|Laboratory',JobRole),3,NA)))),
+         Educ_Cat = ifelse(grepl('Technical|Human',EducationField),0,
+                           ifelse(grepl('Marketing|Medical',EducationField),1,
+                                  ifelse(grepl('Life Sciences',EducationField),2,
+                                         ifelse(grepl('Other',EducationField),3,NA)))),
+         Marital_Cat = ifelse(grepl('Single',MaritalStatus),0,1),
+         Income_Cat = ifelse(MonthlyIncome > 19000, 0,
+                             ifelse(MonthlyIncome > 14000, 1, 
+                                    ifelse(MonthlyIncome > 10000, 2, 
+                                           ifelse(MonthlyIncome > 7000, 3,
+                                                  ifelse(MonthlyIncome > 4000, 4, 5))))),
+         Sat_Cat = ifelse(JobSatisfaction == 1, 1, 0),
+         Prom_Cat = ifelse(YearsSinceLastPromotion > 3, 1, 0),
+         WithManager = ifelse(YearsWithCurrManager == 0, 0, 1),
+         CurrRole = ifelse(YearsInCurrentRole > 8, 0, 1))
+
+# Setting up NoAttrition dataset for later prediction
+NoAttritionPredictDropout <- NewNoAttrition %>% 
+  mutate(MonthlyIncome = incomepreds,
+         Job_Cat = ifelse(grepl('Health|Manager',JobRole),0,
+                          ifelse(grepl('Research|Executive',JobRole),1,
+                                 ifelse(grepl('Resoources|Manufacturing',JobRole),2,
+                                        ifelse(grepl('Representative|Laboratory',JobRole),3,NA)))),
+         Educ_Cat = ifelse(grepl('Technical|Human',EducationField),0,
+                           ifelse(grepl('Marketing|Medical',EducationField),1,
+                                  ifelse(grepl('Life Sciences',EducationField),2,
+                                         ifelse(grepl('Other',EducationField),3,NA)))),
+         Marital_Cat = ifelse(grepl('Single',MaritalStatus),0,1),
+         Income_Cat = ifelse(MonthlyIncome > 19000, 0,
+                             ifelse(MonthlyIncome > 14000, 1, 
+                                    ifelse(MonthlyIncome > 10000, 2, 
+                                           ifelse(MonthlyIncome > 7000, 3,
+                                                  ifelse(MonthlyIncome > 4000, 4, 5))))),
+         Sat_Cat = ifelse(JobSatisfaction == 1, 1, 0),
+         Prom_Cat = ifelse(YearsSinceLastPromotion > 3, 1, 0),
+         WithManager = ifelse(YearsWithCurrManager == 0, 0, 1),
+         CurrRole = ifelse(YearsInCurrentRole > 8, 0, 1))
+
+```
+
+### Top 3 Predictors
+```{r}
+
+NumericAttrition <- NoSalaryPredictIncome %>% 
+  mutate(Attrition = ifelse(Attrition == 'Yes',1,
+                            ifelse(Attrition == 'No',0,NA)))
+
+summary(lm(Attrition ~ WithManager + BusinessTravel + OverTime, data = NumericAttrition))
+
+```
+
+### Plotting Classification Variables
+
+
+```{r}
+NoSalaryPredictIncome %>% 
+  group_by(OverTime) %>% 
+  summarize(AttritionPercent = sum(Attrition == 'Yes')/n()) %>% 
+  mutate(OverTime = factor(OverTime,
+                        levels = OverTime[order(AttritionPercent, decreasing = FALSE)])) %>%
+  ggplot(aes(x = OverTime, y = AttritionPercent, alpha = AttritionPercent)) + 
+  geom_bar(stat = 'identity', fill = 'steelblue') + 
+  theme_minimal() + ylim(0.0,1.0) + 
+  ggtitle('Attrition by Overtime') + 
+  labs(y = 'Percent Attrition', x = 'Overtime Status', alpha = 'Percent Attrition')
+```
+
+```{r}
+NoSalaryPredictIncome %>% 
+  group_by(BusinessTravel) %>% 
+  summarize(AttritionPercent = sum(Attrition == 'Yes')/n()) %>% 
+  mutate(BusinessTravel = factor(BusinessTravel,
+                        levels = BusinessTravel[order(AttritionPercent, decreasing = FALSE)])) %>%
+  ggplot(aes(x = BusinessTravel, y = AttritionPercent, alpha = AttritionPercent)) + 
+  geom_bar(stat = 'identity', fill = 'steelblue') + 
+  theme_minimal() + ylim(0.0,1.0) + 
+  ggtitle('Attrition by Frequency of Business Travel') + 
+  labs(x = 'Travel Frequency', y = 'Percent Attrition', alpha = 'Percent Attrition')
+```
+
+```{r}
+NoSalaryPredictIncome %>% 
+  ggplot(aes(x = YearsWithCurrManager, color = Attrition)) + 
+  geom_density() + 
+  theme_minimal() + 
+  ggtitle('Years With Current Manager') + 
+  labs(x = 'Years with Manager', y = 'Percent Attrition')
+```
+
+```{r}
+NoSalaryPredictIncome %>% 
+  group_by(MaritalStatus) %>% 
+  summarize(AttritionPercent = sum(Attrition == 'Yes')/n()) %>% 
+  mutate(MaritalStatus = factor(MaritalStatus,
+                        levels = MaritalStatus[order(AttritionPercent, decreasing = FALSE)])) %>%
+  ggplot(aes(y = MaritalStatus, x = AttritionPercent, alpha = AttritionPercent)) + 
+  geom_bar(stat = 'identity', fill = 'steelblue') + 
+  theme_minimal() + xlim(0.0,1.0) + 
+  ggtitle('Attrition by Marital Status') + 
+  labs(x = 'Marital Status', y = 'Percent Attrition')
+```
+
+```{r}
+NoSalaryPredictIncome %>% 
+  group_by(EducationField) %>% 
+  summarize(AttritionPercent = sum(Attrition == 'Yes')/n()) %>% 
+  mutate(EducationField = factor(EducationField,
+                        levels = EducationField[order(AttritionPercent, decreasing = FALSE)])) %>%
+  ggplot(aes(y = EducationField, x = AttritionPercent, alpha = AttritionPercent)) + 
+  geom_bar(stat = 'identity', fill = 'steelblue') + 
+  theme_minimal() + xlim(0.0,1.0) + 
+  ggtitle('Attrition by Education Field') + 
+  labs(x = 'Education Field', y = 'Percent Attrition')
+```
+
+```{r}
+NoSalaryPredictIncome %>% 
+  group_by(JobRole) %>% 
+  summarize(AttritionPercent = sum(Attrition == 'Yes')/n()) %>% 
+  mutate(JobRole = factor(JobRole,
+                        levels = JobRole[order(AttritionPercent, decreasing = FALSE)])) %>%
+  ggplot(aes(y = JobRole, x = AttritionPercent, alpha = AttritionPercent)) + 
+  geom_bar(stat = 'identity', fill = 'steelblue') + 
+  theme_minimal() + xlim(0.0,1.0) + 
+  ggtitle('Attrition by Job Roles') + 
+  labs(x = 'Job Role', y = 'Percent Attrition')
+```
+
+```{r}
+NoSalaryPredictIncome %>% 
+  group_by(JobSatisfaction) %>% 
+  summarize(AttritionPercent = sum(Attrition == 'Yes')/n()) %>% 
+  mutate(JobSatisfaction = factor(JobSatisfaction,
+                        levels = JobSatisfaction[order(JobSatisfaction, decreasing = TRUE)])) %>%
+  ggplot(aes(y = JobSatisfaction, x = AttritionPercent, alpha = AttritionPercent)) + 
+  geom_bar(stat = 'identity', fill = 'steelblue') + 
+  theme_minimal() + xlim(0.0,1.0) + 
+  ggtitle('Attrition by Job Satisfaction') + 
+  labs(x = 'Job Satisfaction', y = 'Percent Attrition')
+```
+
+```{r}
+NoSalaryPredictIncome %>% 
+  ggplot(aes(x = YearsSinceLastPromotion, color = Attrition)) + 
+  geom_density() + 
+  theme_minimal() + 
+  ggtitle('Years Since Promotion') + 
+  labs(x = 'Years', y = 'Percent Attrition')
+```
+
+```{r}
+NoSalaryPredictIncome %>% 
+  ggplot(aes(x = YearsInCurrentRole, color = Attrition)) + 
+  geom_density() + 
+  theme_minimal() + 
+  ggtitle('Years In Current Role') + 
+  labs(x = 'Years', y = 'Percent Attrition')
+```
+
+### Test Classification Model (with Predicted Salary as a Predictor)
+```{r}
+
+# SETUP FOR ATTRITION PREDICTION
+
+# Naive-Bayes to predict attrition
+nbtrainIndices = sample(1:dim(NoSalaryPredictIncome)[1],round(0.7 * dim(NoSalaryPredictIncome)[1]))
+nbtrain = NoSalaryPredictIncome[nbtrainIndices,]
+nbtest = NoSalaryPredictIncome[-nbtrainIndices,]
+nbmodel = naiveBayes(nbtrain[,c('MonthlyIncome','Age','OverTime','Job_Cat','RD_Manager0','Educ_Cat','Marital_Cat','Income_Cat','BusinessTravel','Sat_Cat','Prom_Cat','WithManager','CurrRole')],nbtrain$Attrition)
+delete <- confusionMatrix(table(predict(nbmodel,nbtest[,c('MonthlyIncome','Age','OverTime','Job_Cat','RD_Manager0','Educ_Cat','Marital_Cat','Income_Cat','BusinessTravel','Sat_Cat','Prom_Cat','WithManager','CurrRole')]),nbtest$Attrition))
+
+# Checking Accuracy, Sensitivity, and Specificity with Classification
+set.seed(100)
+nbiterations = 1000
+nbmasterAcc = matrix(nrow = nbiterations)
+nbmasterSens = matrix(nrow = nbiterations)
+nbmasterSpec = matrix(nrow = nbiterations)
+nbmasterNull = matrix(nrow = nbiterations)
+
+for(j in 1:nbiterations) {
+  nbtrainIndices = sample(1:dim(NoSalaryPredictIncome)[1],round(0.7 * dim(NoSalaryPredictIncome)[1]))
+  nbtrain = NoSalaryPredictIncome[nbtrainIndices,]
+  nbtest = NoSalaryPredictIncome[-nbtrainIndices,]
+  
+  nbmodel = naiveBayes(nbtrain[,c('MonthlyIncome','Age','OverTime','Job_Cat','Educ_Cat','Marital_Cat','Income_Cat','BusinessTravel','Sat_Cat','Prom_Cat','WithManager','CurrRole')],
+                       nbtrain$Attrition)
+  CM = confusionMatrix(table(predict(nbmodel,nbtest[,c('MonthlyIncome','Age','OverTime','Job_Cat','Educ_Cat','Marital_Cat','Income_Cat','BusinessTravel','Sat_Cat','Prom_Cat','WithManager','CurrRole')]),nbtest$Attrition))
+  nbmasterSens[j] = CM$byClass[1]
+  nbmasterSpec[j] = CM$byClass[2]
+  nbmasterAcc[j] = CM$overall[1]
+  nbmasterNull[j] = CM$overall[5]
+}
+
+colMeans(nbmasterAcc)
+colMeans(nbmasterSens)
+colMeans(nbmasterSpec)
+colMeans(nbmasterNull)
+
+```
+
+```{r}
+# No Information Rate is High. Why? 
+
+NoSalaryPredictIncome %>% 
+  ggplot(aes(x = Attrition, fill = Attrition)) + 
+  geom_bar() + 
+  labs(y = 'Employees') + 
+  ggtitle('Attrition Count') + 
+  theme_pander() + 
+  scale_fill_manual("Legend", values = c("No" = "steelblue", "Yes" = "dodgerblue4"))
+
+```
+
+<div style="margin-bottom:20px;">
+</div>
+
+### Predict Attrition!
+```{r}
+
+# Imputing NoAttrition Dataframe (with Regression Model)
+attpreds <- predict(nbmodel, newdata = NoAttritionPredictDropout)
+
+AttritionResults <- NewNoAttrition %>% 
+  mutate(PredictedAttrition = attpreds)
+
+```
+
+```{r echo = FALSE, warnings = FALSE, message = FALSE}
+
+# Exporting Prediction Results
+write.csv(SalaryResults, "D:\\Shared Lenovo\\Data Science\\Semester 1\\Doing Data Science\\Unit 14+15 - DDS Project 2\\Case2PredictionsKim Salary.csv")
+
+write.csv(AttritionResults, "D:\\Shared Lenovo\\Data Science\\Semester 1\\Doing Data Science\\Unit 14+15 - DDS Project 2\\Case2PredictionsKim Attrition.csv")
+
+```
+
+
+## **Additional Material (was not included)**
+
+### *KNN Impute Attrition*
+```{r}
+
+# Internal KNN
+internalmodel <- knn.cv(NoSalaryPredictIncome[c('MonthlyIncome','Age')], 
+                        cl = NoSalaryPredictIncome$Attrition, k = 1)
+confusionMatrix(table(internalmodel,NoSalaryPredictIncome$Attrition))
+
+iiterations = 50
+inumks = 30
+
+# Internal KNN Cross-Validation
+imasterAcc = matrix(nrow = iiterations, ncol = inumks)
+
+for(j in 1:iiterations) {
+  for(i in 1:inumks) {
+    CM = confusionMatrix(table(knn.cv(NoSalaryPredictIncome[,c('Age','DistanceFromHome','JobLevel','NumCompaniesWorked')],
+                                      NoSalaryPredictIncome$Attrition, k = i),NoSalaryPredictIncome$Attrition))
+    imasterAcc[j,i] = CM$overall[1]
+  }
+}
+
+iMeanAcc = colMeans(imasterAcc)
+plot(seq(1,inumks,1),iMeanAcc, type = "l")
+
+which.max(iMeanAcc) # which inumks is max?
+max(iMeanAcc)
+
+
+# For Specificity
+imasterSpec = matrix(nrow = iiterations, ncol = inumks)
+
+for(j in 1:iiterations) {
+  for(i in 1:inumks) {
+    CM = confusionMatrix(table(knn.cv(NoSalaryPredictIncome[,c('MonthlyIncome','Age','HourlyRate')],
+                                      NoSalaryPredictIncome$Attrition, k = i),NoSalaryPredictIncome$Attrition))
+    imasterSpec[j,i] = CM$byClass[2]
+  }
+}
+
+iMeanSpec = colMeans(imasterSpec)
+
+which.max(iMeanSpec) # which inumks is max?
+max(iMeanSpec)
+
+plot(seq(1,inumks,1),iMeanSpec, type = "l")
+
+```
